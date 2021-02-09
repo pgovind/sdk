@@ -18,7 +18,7 @@ namespace Microsoft.DotNet.Watcher
         private readonly IReporter _reporter;
         private readonly ProcessRunner _processRunner;
         private readonly DotNetWatchOptions _dotnetWatchOptions;
-        private readonly FileChangeHandler _fileChangeHandler;
+        private readonly HotReload _hotReload;
         private readonly IWatchFilter[] _filters;
 
         public DotNetWatcher(IReporter reporter, IFileSetFactory fileSetFactory, DotNetWatchOptions dotNetWatchOptions)
@@ -28,12 +28,12 @@ namespace Microsoft.DotNet.Watcher
             _reporter = reporter;
             _processRunner = new ProcessRunner(reporter);
             _dotnetWatchOptions = dotNetWatchOptions;
-            _fileChangeHandler = new FileChangeHandler(reporter);
+            _hotReload = new HotReload(reporter);
 
             _filters = new IWatchFilter[]
             {
                 new MSBuildEvaluationFilter(fileSetFactory),
-                new NoRestoreFilter(),
+                new DotNetBuildFilter(_processRunner, _reporter),
                 new LaunchBrowserFilter(dotNetWatchOptions),
             };
         }
@@ -46,7 +46,6 @@ namespace Microsoft.DotNet.Watcher
             cancellationToken.Register(state => ((TaskCompletionSource)state).TrySetResult(),
                 cancelledTaskSource);
 
-            var initialArguments = processSpec.Arguments.ToArray();
             var context = new DotNetWatchContext
             {
                 Iteration = -1,
@@ -63,9 +62,6 @@ namespace Microsoft.DotNet.Watcher
             while (true)
             {
                 context.Iteration++;
-
-                // Reset arguments
-                processSpec.Arguments = initialArguments;
 
                 for (var i = 0; i < _filters.Length; i++)
                 {
@@ -89,6 +85,12 @@ namespace Microsoft.DotNet.Watcher
                     return;
                 }
 
+                processSpec.Executable = fileSet.Project.RunCommand;
+                processSpec.Arguments = !string.IsNullOrEmpty(fileSet.Project.RunArguments) ? fileSet.Project.RunArguments.Split(' ') : Array.Empty<string>();
+                processSpec.WorkingDirectory = fileSet.Project.RunWorkingDirectory;
+
+                await _hotReload.InitializeAsync(context, cancellationToken);
+
                 using (var currentRunCancellationSource = new CancellationTokenSource())
                 using (var combinedCancellationSource = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
@@ -109,15 +111,22 @@ namespace Microsoft.DotNet.Watcher
                         fileSetTask = fileSetWatcher.GetChangedFileAsync(combinedCancellationSource.Token);
                         finishedTask = await Task.WhenAny(processTask, fileSetTask, cancelledTaskSource.Task);
 
-                        if (finishedTask == fileSetTask
-                            && fileSetTask.Result is FileItem fileItem &&
-                            await _fileChangeHandler.TryHandleFileAction(context, fileItem, combinedCancellationSource.Token))
+                        if (finishedTask != fileSetTask || fileSetTask.Result is not FileItem fileItem)
                         {
-                            // We're able to handle the file change event without doing a full-rebuild.
+                            // The app exited.
+                            break;
                         }
                         else
                         {
-                            break;
+                            if (await _hotReload.TryHandleFileChange(context, fileItem, combinedCancellationSource.Token))
+                            {
+                                _reporter.Verbose($"Successfully handled changes to {fileItem.FilePath}.");
+                            }
+                            else
+                            {
+                                _reporter.Verbose($"Unable to handle changes to {fileItem.FilePath}. Rebuilding the app..");
+                                break;
+                            }
                         }
                     }
 

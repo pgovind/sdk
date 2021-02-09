@@ -26,16 +26,18 @@ setTimeout(function () {
       setInterval(function () { document.title = glyphs[i++ % glyphs.length] + ' ' + title; }, 240);
     } else {
       const parsed = JSON.parse(message.data);
-      if (parsed.type == 'UpdateStaticFile') {
-        const path = parsed.path;
-        if (path && path.endsWith('.css')) {
-          updateCssByPath(path);
-        } else {
-          console.debug(`File change detected to css file ${path}. Reloading page...`);
-          location.reload();
-          return;
+        if (parsed.type == 'UpdateStaticFile') {
+            const path = parsed.path;
+            if (path && path.endsWith('.css')) {
+                updateCssByPath(path);
+            } else {
+                console.debug(`File change detected to css file ${path}. Reloading page...`);
+                location.reload();
+                return;
+            }
+        } else if (parsed.type == 'HotReloadDelta') {
+            window.blazor._applyHotReload(parsed);
         }
-      }
     }
   }
 
