@@ -4,9 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
-using System.CommandLine.Help;
 using System.CommandLine.Invocation;
-using System.CommandLine.IO;
 using System.CommandLine.Parsing;
 using System.IO;
 using System.Linq;
@@ -248,8 +246,30 @@ Examples:
                 _reporter.Output("Polling file watcher is enabled");
             }
 
-            await using var watcher = new DotNetWatcher(reporter, fileSetFactory, watchOptions);
-            await watcher.WatchAsync(processInfo, cancellationToken);
+            var defaultProfile = LaunchSettingsProfile.ReadDefaultProfile(_workingDirectory, reporter);
+
+            var context = new DotNetWatchContext
+            {
+                ProcessSpec = processInfo,
+                Reporter = _reporter,
+                SuppressMSBuildIncrementalism = watchOptions.SuppressMSBuildIncrementalism,
+                DefaultProfile = defaultProfile,
+            };
+
+            if (string.IsNullOrEmpty(defaultProfile.HotReloadProfile))
+            {
+                // We'll use the presence of a profile to decide if we're going to use the hot-reload based watching.
+                // The watcher will complain if users configure this for runtimes that would not support it.
+                await using var watcher = new LegacyDotNetWatcher(reporter, fileSetFactory, watchOptions);
+                await watcher.WatchAsync(context, cancellationToken);
+            }
+            else
+            {
+                // We'll use the presence of a profile to decide if we're going to use the hot-reload based watching.
+                // The watcher will complain if users configure this for runtimes that would not support it.
+                await using var watcher = new DotNetWatcher(reporter, fileSetFactory, watchOptions);
+                await watcher.WatchAsync(context, cancellationToken);
+            }
 
             return 0;
         }

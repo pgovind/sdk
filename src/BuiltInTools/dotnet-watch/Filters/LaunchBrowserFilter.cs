@@ -173,41 +173,13 @@ namespace Microsoft.DotNet.Watcher.Tools
                 return false;
             }
 
-            // We're executing the run-command. Determine if the launchSettings allows it
-            var launchSettingsPath = Path.Combine(context.ProcessSpec.WorkingDirectory, "Properties", "launchSettings.json");
-            if (!File.Exists(launchSettingsPath))
-            {
-                reporter.Verbose($"No launchSettings.json file found at {launchSettingsPath}. Unable to determine if browser refresh is allowed.");
-                return false;
-            }
-
-            LaunchSettingsJson launchSettings;
-            try
-            {
-                launchSettings = JsonSerializer.Deserialize<LaunchSettingsJson>(
-                    File.ReadAllText(launchSettingsPath),
-                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            }
-            catch (Exception ex)
-            {
-                reporter.Verbose($"Error reading launchSettings.json: {ex}.");
-                return false;
-            }
-
-            var defaultProfile = launchSettings.Profiles.FirstOrDefault(f => f.Value.CommandName == "Project").Value;
-            if (defaultProfile is null)
-            {
-                reporter.Verbose("Unable to find default launchSettings profile.");
-                return false;
-            }
-
-            if (!defaultProfile.LaunchBrowser)
+            if (!context.DefaultProfile.LaunchBrowser)
             {
                 reporter.Verbose("launchSettings does not allow launching browsers.");
                 return false;
             }
 
-            launchUrl = defaultProfile.LaunchUrl;
+            launchUrl = context.DefaultProfile.LaunchUrl;
             return true;
         }
 

@@ -4,7 +4,6 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.DotNet.Watcher.Internal;
@@ -17,7 +16,7 @@ namespace Microsoft.DotNet.Watcher
     {
         private readonly IReporter _reporter;
         private readonly ProcessRunner _processRunner;
-        private readonly DotNetWatchOptions _dotnetWatchOptions;
+        private readonly DotNetWatchOptions _dotNetWatchOptions;
         private readonly HotReload _hotReload;
         private readonly IWatchFilter[] _filters;
 
@@ -27,32 +26,24 @@ namespace Microsoft.DotNet.Watcher
 
             _reporter = reporter;
             _processRunner = new ProcessRunner(reporter);
-            _dotnetWatchOptions = dotNetWatchOptions;
+            _dotNetWatchOptions = dotNetWatchOptions;
             _hotReload = new HotReload(reporter);
 
             _filters = new IWatchFilter[]
             {
                 new MSBuildEvaluationFilter(fileSetFactory),
                 new DotNetBuildFilter(_processRunner, _reporter),
-                new LaunchBrowserFilter(dotNetWatchOptions),
+                new LaunchBrowserFilter(_dotNetWatchOptions),
             };
         }
 
-        public async Task WatchAsync(ProcessSpec processSpec, CancellationToken cancellationToken)
+        public async Task WatchAsync(DotNetWatchContext context, CancellationToken cancellationToken)
         {
-            Ensure.NotNull(processSpec, nameof(processSpec));
-
             var cancelledTaskSource = new TaskCompletionSource();
             cancellationToken.Register(state => ((TaskCompletionSource)state).TrySetResult(),
                 cancelledTaskSource);
 
-            var context = new DotNetWatchContext
-            {
-                Iteration = -1,
-                ProcessSpec = processSpec,
-                Reporter = _reporter,
-                SuppressMSBuildIncrementalism = _dotnetWatchOptions.SuppressMSBuildIncrementalism,
-            };
+            var processSpec = context.ProcessSpec;
 
             if (context.SuppressMSBuildIncrementalism)
             {
@@ -77,6 +68,12 @@ namespace Microsoft.DotNet.Watcher
                 if (fileSet == null)
                 {
                     _reporter.Error("Failed to find a list of files to watch");
+                    return;
+                }
+
+                if (!fileSet.Project.IsNetCoreApp60OrNewer())
+                {
+                    _reporter.Error($"Hot reload based watching is only supported in .NET 6.0 or newer apps. Update the project's launchSettings.json to disable this feature.");
                     return;
                 }
 

@@ -38,22 +38,14 @@ namespace Microsoft.DotNet.Watcher
             };
         }
 
-        public async Task WatchAsync(ProcessSpec processSpec, CancellationToken cancellationToken)
+        public async Task WatchAsync(DotNetWatchContext context, CancellationToken cancellationToken)
         {
-            Ensure.NotNull(processSpec, nameof(processSpec));
-
             var cancelledTaskSource = new TaskCompletionSource();
             cancellationToken.Register(state => ((TaskCompletionSource)state).TrySetResult(),
                 cancelledTaskSource);
 
+            var processSpec = context.ProcessSpec;
             var initialArguments = processSpec.Arguments.ToArray();
-            var context = new DotNetWatchContext
-            {
-                Iteration = -1,
-                ProcessSpec = processSpec,
-                Reporter = _reporter,
-                SuppressMSBuildIncrementalism = _dotnetWatchOptions.SuppressMSBuildIncrementalism,
-            };
 
             if (context.SuppressMSBuildIncrementalism)
             {
