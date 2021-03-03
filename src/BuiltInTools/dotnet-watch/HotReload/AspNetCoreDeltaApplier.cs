@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
@@ -12,8 +13,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.Extensions.Tools.Internal;
-using Microsoft.VisualStudio.Debugger.Contracts.EditAndContinue;
 
 namespace Microsoft.DotNet.Watcher.Tools
 {
@@ -38,11 +39,14 @@ namespace Microsoft.DotNet.Watcher.Tools
             _pipe = new NamedPipeServerStream("netcore-hot-reload", PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             _task = _pipe.WaitForConnectionAsync(cancellationToken);
 
-            var deltaApplier = Path.Combine(AppContext.BaseDirectory, "hotreload", "Microsoft.Extensions.AspNetCoreDeltaApplier.dll");
-            context.ProcessSpec.EnvironmentVariables.DotNetStartupHooks.Add(deltaApplier);
+            if (context.Iteration == 0)
+            {
+                var deltaApplier = Path.Combine(AppContext.BaseDirectory, "hotreload", "Microsoft.Extensions.AspNetCoreDeltaApplier.dll");
+                context.ProcessSpec.EnvironmentVariables.DotNetStartupHooks.Add(deltaApplier);
+            }
         }
 
-        public async ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken)
+        public async ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates2 Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken)
         {
             if (!_task.IsCompletedSuccessfully || !_pipe.IsConnected)
             {
@@ -67,22 +71,34 @@ namespace Microsoft.DotNet.Watcher.Tools
             await JsonSerializer.SerializeAsync(_pipe, payload, cancellationToken: cancellationToken);
             await _pipe.FlushAsync(cancellationToken);
 
-            int result;
+            var result = ApplyResult.Failed;
+            var bytes = ArrayPool<byte>.Shared.Rent(1);
             try
             {
-                result = _pipe.ReadByte();
+                using var cancellationTokenSource = new CancellationTokenSource(2000);
+                var numBytes = await _pipe.ReadAsync(bytes, cancellationTokenSource.Token);
+
+                if (numBytes == 1)
+                {
+                    result = (ApplyResult)bytes[0];
+                }
             }
-            catch (IOException)
+            catch (Exception ex)
             {
-                result = -1;
+                // Log it, but we'll treat this as a failed apply.
+                _reporter.Verbose(ex.Message);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(bytes);
             }
 
-            if (result != 0)
+            if (result == ApplyResult.Failed)
             {
                 return false;
             }
 
-            if (context.BrowserRefreshServer != null)
+            if ( context.BrowserRefreshServer != null)
             {
                 await context.BrowserRefreshServer.ReloadAsync(cancellationToken);
             }
@@ -101,5 +117,13 @@ namespace Microsoft.DotNet.Watcher.Tools
             public byte[] MetadataDelta { get; init; }
             public byte[] ILDelta { get; init; }
         }
+
+        public enum ApplyResult
+        {
+            Failed = -1,
+            Success = 0,
+            Success_RefreshBrowser = 1,
+        }
+
     }
 }

@@ -18,7 +18,7 @@ namespace Microsoft.DotNet.Watcher
         private readonly IReporter _reporter;
         private readonly ProcessRunner _processRunner;
         private readonly DotNetWatchOptions _dotnetWatchOptions;
-        private readonly HotReload _hotReload;
+        private readonly StaticFileHandler _staticFileHandler;
         private readonly IWatchFilter[] _filters;
 
         public LegacyDotNetWatcher(IReporter reporter, IFileSetFactory fileSetFactory, DotNetWatchOptions dotNetWatchOptions)
@@ -28,7 +28,7 @@ namespace Microsoft.DotNet.Watcher
             _reporter = reporter;
             _processRunner = new ProcessRunner(reporter);
             _dotnetWatchOptions = dotNetWatchOptions;
-            _hotReload = new HotReload(reporter);
+            _staticFileHandler = new StaticFileHandler(reporter);
 
             _filters = new IWatchFilter[]
             {
@@ -81,8 +81,6 @@ namespace Microsoft.DotNet.Watcher
                     return;
                 }
 
-                await _hotReload.InitializeAsync(context, cancellationToken);
-
                 using (var currentRunCancellationSource = new CancellationTokenSource())
                 using (var combinedCancellationSource = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
@@ -110,7 +108,7 @@ namespace Microsoft.DotNet.Watcher
                         }
                         else
                         {
-                            if (await _hotReload.TryHandleFileChange(context, fileItem, combinedCancellationSource.Token))
+                            if (await _staticFileHandler.TryHandleFileChange(context, fileItem, combinedCancellationSource.Token))
                             {
                                 _reporter.Verbose($"Successfully handled changes to {fileItem.FilePath}.");
                             }

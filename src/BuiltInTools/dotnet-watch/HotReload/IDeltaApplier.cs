@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
-using Microsoft.VisualStudio.Debugger.Contracts.EditAndContinue;
+using Microsoft.CodeAnalysis.EditAndContinue;
 
 namespace Microsoft.DotNet.Watcher.Tools
 {
@@ -14,6 +14,6 @@ namespace Microsoft.DotNet.Watcher.Tools
     {
         ValueTask InitializeAsync(DotNetWatchContext context, CancellationToken cancellationToken);
 
-        ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken);
+        ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates2 Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken);
     }
 }

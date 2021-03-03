@@ -4,7 +4,6 @@
 #nullable enable
 
 using System;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -13,22 +12,19 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.EditAndContinue;
-using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Tools.Internal;
-using Microsoft.VisualStudio.Debugger.Contracts.EditAndContinue;
 
 namespace Microsoft.DotNet.Watcher.Tools
 {
     internal class CompilationHandler
     {
-        private static readonly SolutionActiveStatementSpanProvider NoActiveSpans = (_, _) => new(ImmutableArray<TextSpan>.Empty);
-        private Task? _initializeTask;
+        private Task<(Solution, IEditAndContinueWorkspaceService)>? _initializeTask;
         private Solution? _currentSolution;
         private IEditAndContinueWorkspaceService? _editAndContinue;
 
-        private bool _failedToInitialize;
         private readonly IDeltaApplier _deltaApplier;
         private readonly IReporter _reporter;
 
@@ -58,12 +54,8 @@ namespace Microsoft.DotNet.Watcher.Tools
                 }
             }
 
-            if (context.FileSet.Project.IsNetCoreApp60OrNewer())
-            {
-                _initializeTask = Task.Run(() => InitializeMSBuildSolutionAsync(context.FileSet.Project.ProjectPath, _reporter), cancellationToken);
-
-                context.ProcessSpec.EnvironmentVariables["COMPLUS_ForceEnc"] = "1";
-            }
+            _initializeTask = Task.Run(() => CompilationWorkspaceProvider.CreateWorkspaceAsync(context.FileSet.Project.ProjectPath, _reporter, cancellationToken), cancellationToken);
+            context.ProcessSpec.EnvironmentVariables["COMPLUS_ForceEnc"] = "1";
 
             return;
         }
@@ -83,7 +75,7 @@ namespace Microsoft.DotNet.Watcher.Tools
                 return false;
             }
 
-            editAndContinue.StartEditSession(StubDebuggerService.Instance, out _);
+            editAndContinue.StartEditSession(out _);
 
             Solution? updatedSolution = null;
             ProjectId updatedProjectId;
@@ -105,14 +97,26 @@ namespace Microsoft.DotNet.Watcher.Tools
                 return false;
             }
 
-            var (updates, diagnostics) = await editAndContinue.EmitSolutionUpdateAsync(updatedSolution, NoActiveSpans, cancellationToken);
+            var (updates, diagnostics) = await editAndContinue.EmitSolutionUpdate2Async(updatedSolution, cancellationToken);
 
-            if (updates.Status == ManagedModuleUpdateStatus.None)
+            if (updates.Status == ManagedModuleUpdateStatus2.None)
             {
                 editAndContinue.EndEditSession(out _);
+                var project = updatedSolution.GetProject(updatedProjectId)!;
+                if (project.TryGetCompilation(out var compilation) && compilation.GetDiagnostics() is { Length: > 0 } compilationDiagnostics)
+                {
+                    foreach (var item in compilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+                    {
+                        _reporter.Warn(CSharpDiagnosticFormatter.Instance.Format(item));
+                    }
+
+                    return false;
+                }
+
+                _reporter.Verbose("No update to apply.");
                 return true;
             }
-            else if (updates.Status == ManagedModuleUpdateStatus.Blocked)
+            else if (updates.Status == ManagedModuleUpdateStatus2.Blocked)
             {
                 // Rude edit or compilation error. We eventually want to try and distinguish between the two cases since one of these
                 // can be handled on the client. But for now, let's handle them as the same.
@@ -149,15 +153,15 @@ namespace Microsoft.DotNet.Watcher.Tools
                 return (false, null!, null!);
             }
 
-            await _initializeTask;
-
-            if (_failedToInitialize)
+            try
             {
+                (_currentSolution, _editAndContinue) = await _initializeTask;
+            }
+            catch (Exception ex)
+            {
+                _reporter.Warn(ex.Message);
                 return (false, null!, null!);
             }
-
-            Debug.Assert(_currentSolution is not null);
-            Debug.Assert(_editAndContinue is not null);
 
             return (true, _currentSolution, _editAndContinue);
         }
@@ -183,46 +187,6 @@ namespace Microsoft.DotNet.Watcher.Tools
 
             Debug.Fail("This shouldn't happen.");
             return null;
-        }
-
-        private async Task InitializeMSBuildSolutionAsync(string projectPath, IReporter reporter)
-        {
-            var workspace = MSBuildWorkspace.Create();
-
-            workspace.WorkspaceFailed += (_sender, diag) =>
-            {
-                if (diag.Diagnostic.Kind == WorkspaceDiagnosticKind.Warning)
-                {
-                    reporter.Verbose($"MSBuildWorkspace warning: {diag.Diagnostic}");
-                }
-                else
-                {
-                    reporter.Warn($"Failed to create MSBuildWorkspace: {diag.Diagnostic}");
-                    _failedToInitialize = true;
-                }
-            };
-
-            var enc = workspace.Services.GetRequiredService<IEditAndContinueWorkspaceService>();
-            await workspace.OpenProjectAsync(projectPath);
-            enc.StartDebuggingSession(workspace.CurrentSolution);
-
-            foreach (var project in workspace.CurrentSolution.Projects)
-            {
-                foreach (var document in project.Documents)
-                {
-                    await document.GetTextAsync();
-                    await enc.OnSourceFileUpdatedAsync(document);
-                }
-
-                foreach (var document in project.AdditionalDocuments)
-                {
-                    await document.GetTextAsync();
-                }
-            }
-
-            _editAndContinue = enc;
-            _currentSolution = workspace.CurrentSolution;
-            _failedToInitialize = false;
         }
     }
 }
