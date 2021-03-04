@@ -22,7 +22,8 @@ namespace Microsoft.DotNet.Watcher.Tools
 
         public async ValueTask ProcessAsync(DotNetWatchContext context, CancellationToken cancellationToken)
         {
-            while (true)
+            using var fileSetWatcher = new FileSetWatcher(context.FileSet, _reporter);
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var arguments = context.RequiresMSBuildRevaluation ?
                    new[] { "msbuild", "/t:Build", "/restore", "/nologo" } :
@@ -43,7 +44,6 @@ namespace Microsoft.DotNet.Watcher.Tools
                 }
 
                 // If the build fails, we'll retry until we have a successful build.
-                var fileSetWatcher = new FileSetWatcher(context.FileSet, _reporter);
                 context.ChangedFile = await fileSetWatcher.GetChangedFileAsync(cancellationToken, () => _reporter.Warn("Waiting for a file to change before restarting dotnet..."));
             }
         }

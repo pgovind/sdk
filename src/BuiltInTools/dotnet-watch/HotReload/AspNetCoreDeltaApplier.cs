@@ -4,7 +4,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -12,7 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.Extensions.Tools.Internal;
 
@@ -46,7 +45,7 @@ namespace Microsoft.DotNet.Watcher.Tools
             }
         }
 
-        public async ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates2 Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken)
+        public async ValueTask<bool> Apply(DotNetWatchContext context, ManagedModuleUpdates2 updates, CancellationToken cancellationToken)
         {
             if (!_task.IsCompletedSuccessfully || !_pipe.IsConnected)
             {
@@ -54,8 +53,6 @@ namespace Microsoft.DotNet.Watcher.Tools
                 _reporter.Verbose("No client connected to receive delta updates.");
                 return false;
             }
-
-            var (updates, diagnostics) = solutionUpdate;
 
             var payload = new UpdatePayload
             {
@@ -106,6 +103,19 @@ namespace Microsoft.DotNet.Watcher.Tools
             return true;
         }
 
+        public async ValueTask ReportDiagnosticsAsync(DotNetWatchContext context, IEnumerable<string> diagnostics, CancellationToken cancellationToken)
+        {
+            if (context.BrowserRefreshServer != null)
+            {
+                var message = JsonSerializer.SerializeToUtf8Bytes(new HotReloadDiagnostics
+                {
+                    Diagnostics = diagnostics
+                }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+                await context.BrowserRefreshServer.SendMessage(message, cancellationToken);
+            }
+        }
+
         private readonly struct UpdatePayload
         {
             public IEnumerable<UpdateDelta> Deltas { get; init; }
@@ -125,5 +135,11 @@ namespace Microsoft.DotNet.Watcher.Tools
             Success_RefreshBrowser = 1,
         }
 
+        public readonly struct HotReloadDiagnostics
+        {
+            public string Type => "HotReloadDiagnosticsv1";
+
+            public IEnumerable<string> Diagnostics { get; init; }
+        }
     }
 }

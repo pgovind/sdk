@@ -3,13 +3,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.Extensions.Tools.Internal;
 
@@ -29,15 +26,13 @@ namespace Microsoft.DotNet.Watcher.Tools
             return default;
         }
 
-        public async ValueTask<bool> Apply(DotNetWatchContext context, Solution solution, (ManagedModuleUpdates2 Updates, ImmutableArray<DiagnosticData> Diagnostics) solutionUpdate, CancellationToken cancellationToken)
+        public async ValueTask<bool> Apply(DotNetWatchContext context, ManagedModuleUpdates2 updates, CancellationToken cancellationToken)
         {
             if (context.BrowserRefreshServer is null)
             {
                 _reporter.Verbose("Unable to send deltas because the refresh server is unavailable.");
                 return false;
             }
-
-            var (updates, diagnostics) = solutionUpdate;
 
             var payload = new UpdatePayload
             {
@@ -54,6 +49,8 @@ namespace Microsoft.DotNet.Watcher.Tools
 
             return true;
         }
+
+        public ValueTask ReportDiagnosticsAsync(DotNetWatchContext context, IEnumerable<string> diagnostics, CancellationToken cancellationToken) => throw new NotImplementedException();
 
         private readonly struct UpdatePayload
         {

@@ -115,13 +115,15 @@ namespace Microsoft.DotNet.Watcher
                         }
                         else
                         {
+                            _reporter.Verbose($"Detected changes to {fileItem.FilePath}. Attempting to handle the change...");
+
                             if (await _hotReload.TryHandleFileChange(context, fileItem, combinedCancellationSource.Token))
                             {
                                 _reporter.Verbose($"Successfully handled changes to {fileItem.FilePath}.");
                             }
                             else
                             {
-                                _reporter.Verbose($"Unable to handle changes to {fileItem.FilePath}. Rebuilding the app..");
+                                _reporter.Verbose($"Unable to handle changes to {fileItem.FilePath}. Rebuilding the app.");
                                 break;
                             }
                         }

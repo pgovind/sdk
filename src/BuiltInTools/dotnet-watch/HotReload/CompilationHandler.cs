@@ -4,15 +4,19 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Tools.Internal;
@@ -97,42 +101,29 @@ namespace Microsoft.DotNet.Watcher.Tools
                 return false;
             }
 
-            var (updates, diagnostics) = await editAndContinue.EmitSolutionUpdate2Async(updatedSolution, cancellationToken);
+            var (updates, encDiagnostics) = await editAndContinue.EmitSolutionUpdate2Async(updatedSolution, cancellationToken);
 
-            if (updates.Status == ManagedModuleUpdateStatus2.None)
+            if (updates.Status != ManagedModuleUpdateStatus2.Ready)
             {
                 editAndContinue.EndEditSession(out _);
                 var project = updatedSolution.GetProject(updatedProjectId)!;
-                if (project.TryGetCompilation(out var compilation) && compilation.GetDiagnostics() is { Length: > 0 } compilationDiagnostics)
+                var diagnostics = GetDiagnostics(project, cancellationToken);
+
+                if (diagnostics.Count > 0)
                 {
-                    foreach (var item in compilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+                    foreach (var diagnostic in diagnostics)
                     {
-                        _reporter.Warn(CSharpDiagnosticFormatter.Instance.Format(item));
+                        _reporter.Verbose(diagnostic);
                     }
 
-                    return false;
+                    await _deltaApplier.ReportDiagnosticsAsync(context, diagnostics, cancellationToken);
+
+                    // We need a better way to differentiate between rude vs compilation errors, but for now let's assume any compilation
+                    // diagnostics mean the latter. In this case, treat it as if we successfully applied the delta.
+                    return true;
                 }
 
-                _reporter.Verbose("No update to apply.");
-                return true;
-            }
-            else if (updates.Status == ManagedModuleUpdateStatus2.Blocked)
-            {
-                // Rude edit or compilation error. We eventually want to try and distinguish between the two cases since one of these
-                // can be handled on the client. But for now, let's handle them as the same.
                 _reporter.Verbose("Unable to apply update.");
-
-                foreach (var diagnosticData in diagnostics)
-                {
-                    var project = updatedSolution.GetProject(diagnosticData.ProjectId);
-                    if (project is null)
-                    {
-                        continue;
-                    }
-                    var diagnostic = await diagnosticData.ToDiagnosticAsync(project, cancellationToken);
-                    _reporter.Verbose(diagnostic.ToString());
-                }
-
                 return false;
             }
 
@@ -143,7 +134,29 @@ namespace Microsoft.DotNet.Watcher.Tools
             // We'll instead simply keep track of the updated solution.
             currentSolution = updatedSolution;
 
-            return await _deltaApplier.Apply(context, updatedSolution, (updates, diagnostics), cancellationToken);
+            return await _deltaApplier.Apply(context, updates, cancellationToken);
+        }
+
+        private IReadOnlyList<string> GetDiagnostics(Project project, CancellationToken cancellationToken)
+        {
+            if (!project.TryGetCompilation(out var compilation))
+            {
+                return Array.Empty<string>();
+            }
+
+            var compilationDiagnostics = compilation.GetDiagnostics(cancellationToken);
+            if (compilationDiagnostics.IsDefaultOrEmpty)
+            {
+                return Array.Empty<string>();
+            }
+
+            var diagnostics = new List<string>();
+            foreach (var item in compilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+            {
+                diagnostics.Add(CSharpDiagnosticFormatter.Instance.Format(item));
+            }
+            
+            return diagnostics;
         }
 
         private async ValueTask<(bool, Solution, IEditAndContinueWorkspaceService)> EnsureSolutionInitializedAsync()

@@ -37,6 +37,8 @@ setTimeout(function () {
             }
         } else if (parsed.type == 'HotReloadDelta') {
             window.blazor._applyHotReload(parsed);
+        } else if (parsed.type == 'HotReloadDiagnosticsv1') {
+            displayDiagnostics(parsed.diagnostics);
         }
     }
   }
@@ -88,5 +90,15 @@ setTimeout(function () {
     [...document.querySelectorAll('link')]
       .filter(l => l.baseURI === document.baseURI && l.href && l.href.indexOf('.styles.css') !== -1)
       .forEach(e => updateCssElement(e));
+  }
+
+  let firstDiagnostics = true;
+  function displayDiagnostics(diagnostics) {
+    if (firstDiagnostics) {
+      alert('Look in the console!');
+      firstDiagnostics = false;
+    }
+
+    diagnostics.forEach(d => console.warn(d));
   }
 }, 500);
